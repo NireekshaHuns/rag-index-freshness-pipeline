@@ -8,7 +8,7 @@ are re-embedded. No update is lost or applied twice, even when processes crash,
 events are duplicated or reordered, or the embedding API fails.
 
 **Measured** (1,000 documents, 10% of paragraphs edited; [details](docs/benchmarks.md)):
-p50 freshness lag **168 ms**, p95 **682 ms**, and **83% fewer embedding calls**
+p50 freshness lag **158 ms**, p95 **376 ms**, and **83% fewer embedding calls**
 than re-indexing each edited document.
 
 ## The problem
@@ -75,15 +75,15 @@ make demo      # create -> search -> edit one paragraph -> time until search ref
 
 ```
 ==> Searching the document: 'what is the hotel nightly limit'
-  indexed and searchable after 0.70s
-  BEFORE (v1, score 0.170):
+  indexed and searchable after 0.17s
+  BEFORE (v1, score 0.309):
     "Hotel stays are reimbursed up to a nightly limit of 200 dollars in most cities. ..."
 ==> Editing one paragraph: 200 -> 250 dollars per night
 ==> Polling search until the new content appears
-  AFTER  (v2, score 0.170):
+  AFTER  (v2, score 0.309):
     "Hotel stays are reimbursed up to a nightly limit of 250 dollars in most cities. ..."
 ------------------------------------------------------------
-  Edit visible in search after 0.14s
+  Edit visible in search after 0.10s
   Old text still returned: no
   chunks re-embedded for the edit: 1 of 4 (3 reused)
 ------------------------------------------------------------
@@ -106,7 +106,7 @@ Postgres on 5432. Kafka is on 9092.
 |---|---|
 | `make up` / `make down` / `make reset` | Start everything / stop / stop and delete all data |
 | `make demo` | End-to-end freshness demo |
-| `make verify` | Check that the index exactly matches the source documents (exits 1 on any violation) |
+| `make verify` | Check that the index exactly matches the source documents; waits up to 30 s for in-flight changes, then exits 1 on any violation |
 | `make bench` | Run the benchmark and rewrite `docs/benchmarks.md` |
 | `make chaos` | Fault-injection scenarios, each followed by the verifier |
 | `make lint` / `make test` | Ruff checks / unit + integration tests (needs Docker) |
@@ -209,8 +209,8 @@ silicon Mac). Full report: [docs/benchmarks.md](docs/benchmarks.md).
 
 | Phase | Documents | p50 lag | p95 lag | p99 lag | Throughput |
 |---|---|---|---|---|---|
-| Seed (1,000 docs at once) | 1,000 | 2.9 s | 7.3 s | 7.5 s | 119 docs/s |
-| Edit (paced at 50 updates/s) | 560 | 168 ms | 682 ms | 943 ms | 49.8 docs/s |
+| Seed (1,000 docs at once) | 1,000 | 2.5 s | 6.5 s | 6.7 s | 134 docs/s |
+| Edit (paced at 50 updates/s) | 560 | 158 ms | 376 ms | 583 ms | 49.5 docs/s |
 
 | Re-embedding for the edit phase | Chunks |
 |---|---|

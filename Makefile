@@ -43,12 +43,12 @@ infra:
 demo:
 	uv run python scripts/demo.py
 
-# Stored vectors can only be recomputed offline with the fake provider.
 bench:
 	uv run python scripts/benchmark.py
 
+# Waits for in-flight changes to settle; vectors are only rechecked with the fake provider.
 verify:
-	uv run python scripts/verify.py $(if $(filter openai,$(EMBEDDING_PROVIDER)),,--embeddings)
+	uv run python scripts/verify.py --wait 30 $(if $(filter openai,$(EMBEDDING_PROVIDER)),,--embeddings)
 
 ps:
 	$(COMPOSE) ps
