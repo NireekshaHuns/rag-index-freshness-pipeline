@@ -133,11 +133,7 @@ def run(api: Api, prometheus_url: str, timeout: float, cleanup: bool) -> None:
         sys.exit(f"  edit not visible after {timeout:.0f}s; check `make logs`")
     edit_seconds = time.monotonic() - edit_started
     show_hit("AFTER ", after)
-    stale = [
-        h
-        for h in api.search(QUERY, top_k=10)
-        if h["document_id"] == doc_id and OLD_TEXT in h["content"]
-    ]
+    stale = [h for h in api.search(QUERY, doc_id, top_k=50) if OLD_TEXT in h["content"]]
 
     reembed_line = None
     if counters_before is not None:
@@ -155,9 +151,7 @@ def run(api: Api, prometheus_url: str, timeout: float, cleanup: bool) -> None:
         step("Deleting the document")
         delete_started = time.monotonic()
         api.call("DELETE", f"/documents/{doc_id}")
-        wait_until(
-            lambda: not any(h["document_id"] == doc_id for h in api.search(QUERY)) or None, timeout
-        )
+        wait_until(lambda: not api.search(QUERY, doc_id) or None, timeout)
         print(f"  gone from search after {time.monotonic() - delete_started:.2f}s")
 
     print("\n" + "-" * 60)
