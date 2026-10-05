@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up infra ps logs down reset smoke migrate api relay indexer reconciler
+.PHONY: install lint format test test-unit test-integration up infra demo ps logs down reset smoke migrate api relay indexer reconciler
 
 install:
 	uv sync
@@ -36,6 +36,9 @@ up:
 infra:
 	$(COMPOSE) up -d --wait postgres kafka prometheus grafana
 	$(COMPOSE) run --rm kafka-init > /dev/null
+
+demo:
+	uv run python scripts/demo.py
 
 ps:
 	$(COMPOSE) ps
