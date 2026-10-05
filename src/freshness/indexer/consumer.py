@@ -7,7 +7,9 @@ from confluent_kafka import Consumer, KafkaException, Message, TopicPartition
 
 from freshness.config import Settings
 from freshness.events import ChangeEvent
+from freshness.indexer.dlq import DeadLetterError, DeadLetterPublisher
 from freshness.indexer.processor import DocumentIndexer, ProcessResult
+from freshness.indexer.retry import RetryPolicy, is_retryable
 
 log = logging.getLogger(__name__)
 
@@ -32,12 +34,16 @@ class IndexerWorker:
         consumer: Consumer,
         indexer: DocumentIndexer,
         topic: str,
-        failure_backoff_seconds: float = 1.0,
+        dead_letters: DeadLetterPublisher,
+        retry: RetryPolicy | None = None,
+        stop: threading.Event | None = None,
     ) -> None:
         self.consumer = consumer
         self.indexer = indexer
         self.topic = topic
-        self.failure_backoff_seconds = failure_backoff_seconds
+        self.dead_letters = dead_letters
+        self.retry = retry or RetryPolicy()
+        self.stop = stop or threading.Event()
 
     def handle(self, event: ChangeEvent) -> ProcessResult:
         result = self.indexer.process(event.document_id)
@@ -54,7 +60,7 @@ class IndexerWorker:
         return result
 
     def poll_once(self, timeout: float = 1.0) -> bool:
-        """Handle at most one message. Returns True if a message was committed."""
+        """Handle at most one message. Returns True if its offset was committed."""
         msg = self.consumer.poll(timeout)
         if msg is None:
             return False
@@ -64,26 +70,53 @@ class IndexerWorker:
         try:
             event = ChangeEvent.from_json(msg.value())
         except (ValueError, KeyError) as exc:
-            # Unparseable events can never succeed; skip rather than block the partition.
-            log.error("dropping malformed event at %s: %s", _position(msg), exc)
-            self._commit(msg)
-            return True
+            # A malformed event can never succeed; retrying would only stall the partition.
+            log.error("malformed event at %s: %s", _position(msg), exc)
+            return self._dead_letter(msg, exc, attempts=1)
+
+        for attempt in range(1, self.retry.max_attempts + 1):
+            try:
+                self.handle(event)
+            except Exception as exc:
+                if not is_retryable(exc) or attempt == self.retry.max_attempts:
+                    log.error(
+                        "event %s failed after %d attempt(s): %r", event.event_id, attempt, exc
+                    )
+                    return self._dead_letter(msg, exc, attempts=attempt)
+                delay = self.retry.delay(attempt - 1)
+                log.warning(
+                    "event %s attempt %d failed (%r); retrying in %.2fs",
+                    event.event_id,
+                    attempt,
+                    exc,
+                    delay,
+                )
+                # Retry in place so later events for this document stay behind it.
+                if self.stop.wait(delay):
+                    self._rewind(msg)  # shutting down: leave it for the next owner
+                    return False
+            else:
+                self._commit(msg)
+                return True
+        raise AssertionError("unreachable")
+
+    def _dead_letter(self, msg: Message, error: BaseException, attempts: int) -> bool:
         try:
-            self.handle(event)
-        except Exception:
-            log.exception("failed to process event %s; will retry", event.event_id)
-            # Rewind so the same message is redelivered; committing a later
-            # offset would otherwise silently skip this one.
+            self.dead_letters.publish(msg, error, attempts)
+        except DeadLetterError:
+            log.exception("could not dead-letter %s; will redeliver", _position(msg))
             self._rewind(msg)
+            self.stop.wait(1.0)
             return False
+        # Committing past the poison event unblocks the partition.
         self._commit(msg)
         return True
 
-    def run(self, stop: threading.Event) -> None:
+    def run(self) -> None:
         self.consumer.subscribe([self.topic])
         log.info("indexer consuming %s", self.topic)
         try:
-            while not stop.is_set():
+            while not self.stop.is_set():
                 self.poll_once()
         finally:
             self.consumer.close()
@@ -93,12 +126,13 @@ class IndexerWorker:
         self.consumer.commit(message=msg, asynchronous=False)
 
     def _rewind(self, msg: Message) -> None:
+        """Seek back so the same message is redelivered; committing a later offset
+        would otherwise silently skip this one."""
         partition = TopicPartition(msg.topic(), msg.partition(), msg.offset())
         try:
             self.consumer.seek(partition)
         except KafkaException:
             log.exception("seek failed for %s", _position(msg))
-        threading.Event().wait(self.failure_backoff_seconds)
 
 
 def _position(msg: Message) -> str:

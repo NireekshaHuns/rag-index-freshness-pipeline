@@ -14,6 +14,7 @@ from freshness.config import Settings
 from freshness.db import create_pool
 from freshness.embeddings.fake import FakeEmbeddingProvider
 from freshness.indexer.consumer import IndexerWorker, create_consumer
+from freshness.indexer.dlq import DeadLetterPublisher
 from freshness.indexer.processor import ConcurrentModificationError, DocumentIndexer
 from freshness.kafka import create_producer
 from freshness.relay.relay import OutboxRelay
@@ -289,13 +290,15 @@ def test_end_to_end_through_kafka(
     while relay.publish_batch():
         pass
 
+    stop = threading.Event()
     worker = IndexerWorker(
         create_consumer(settings, **{"session.timeout.ms": 6000}),
         DocumentIndexer(pool, FakeEmbeddingProvider(DIMENSION)),
         kafka_topic,
+        DeadLetterPublisher(create_producer(settings), f"{kafka_topic}.dlq"),
+        stop=stop,
     )
-    stop = threading.Event()
-    thread = threading.Thread(target=worker.run, args=(stop,))
+    thread = threading.Thread(target=worker.run)
     thread.start()
     try:
         deadline = time.monotonic() + 30

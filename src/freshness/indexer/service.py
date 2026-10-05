@@ -8,7 +8,10 @@ from freshness.config import Settings
 from freshness.db import create_pool, migrate
 from freshness.embeddings import create_provider
 from freshness.indexer.consumer import IndexerWorker, create_consumer
+from freshness.indexer.dlq import DeadLetterPublisher
 from freshness.indexer.processor import DocumentIndexer
+from freshness.indexer.retry import RetryPolicy
+from freshness.kafka import create_producer
 
 
 def main() -> None:
@@ -23,8 +26,11 @@ def main() -> None:
         create_consumer(settings),
         DocumentIndexer(pool, create_provider(settings)),
         settings.kafka_topic,
+        DeadLetterPublisher(create_producer(settings), settings.kafka_dlq_topic),
+        RetryPolicy(settings.max_retries, settings.retry_base_delay_seconds),
+        stop,
     )
     try:
-        worker.run(stop)
+        worker.run()
     finally:
         pool.close()
