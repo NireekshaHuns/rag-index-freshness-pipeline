@@ -46,11 +46,16 @@ class StubConsumer:
         self.msg = msg
         self.committed: list[int] = []
         self.seeks: list[int] = []
+        self.reject_commits = False
 
     def poll(self, timeout: float) -> StubMessage:
         return self.msg
 
     def commit(self, message: StubMessage, asynchronous: bool) -> None:
+        if self.reject_commits:
+            from confluent_kafka import KafkaError, KafkaException
+
+            raise KafkaException(KafkaError(KafkaError.ILLEGAL_GENERATION))
         self.committed.append(message.offset())
 
     def seek(self, partition: Any) -> None:
@@ -211,3 +216,14 @@ def test_consumer_lag_tracks_assignment() -> None:
     from prometheus_client import REGISTRY
 
     assert REGISTRY.get_sample_value("indexer_consumer_lag", {"partition": "0"}) is None
+
+
+def test_commit_rejected_by_rebalance_does_not_crash_the_worker() -> None:
+    worker, consumer, indexer, dlq = make_worker([])
+    consumer.reject_commits = True
+
+    assert worker.poll_once() is False  # processed, but the offset wasn't stored
+    assert indexer.calls == 1 and dlq.published == []
+
+    consumer.reject_commits = False
+    assert worker.poll_once() is True  # redelivery is handled normally

@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up infra demo verify ps logs down reset smoke migrate api relay indexer reconciler
+.PHONY: install lint format test test-unit test-integration chaos up infra demo verify ps logs down reset smoke migrate api relay indexer reconciler
 
 install:
 	uv sync
@@ -22,6 +22,9 @@ test-unit:
 
 test-integration:
 	uv run pytest -m integration
+
+chaos:
+	uv run pytest tests/chaos -v -s
 
 APP_SERVICES = api relay indexer reconciler
 

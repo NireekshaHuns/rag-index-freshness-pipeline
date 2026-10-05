@@ -39,6 +39,9 @@ src = ["src", "tests"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit", "tests/integration"]
 addopts = "-ra"
-markers = ["integration: needs Docker (real Postgres/Kafka via testcontainers)"]
+markers = [
+    "integration: needs Docker (real Postgres/Kafka via testcontainers)",
+    "chaos: fault-injection scenarios against real service processes",
+]

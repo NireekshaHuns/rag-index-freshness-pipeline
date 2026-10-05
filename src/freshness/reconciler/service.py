@@ -20,6 +20,8 @@ def main() -> None:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     try:
-        Reconciler(pool).run(stop, settings.reconcile_interval_seconds)
+        Reconciler(pool, grace_seconds=settings.reconcile_grace_seconds).run(
+            stop, settings.reconcile_interval_seconds
+        )
     finally:
         pool.close()

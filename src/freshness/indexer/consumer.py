@@ -25,6 +25,7 @@ def create_consumer(settings: Settings, **overrides: str | int | bool) -> Consum
         "enable.auto.commit": False,
         "enable.auto.offset.store": False,
         "partition.assignment.strategy": "cooperative-sticky",
+        "session.timeout.ms": settings.kafka_session_timeout_ms,
     }
     config.update(overrides)
     return Consumer(config)
@@ -103,8 +104,7 @@ class IndexerWorker:
                     self._rewind(msg)  # shutting down: leave it for the next owner
                     return False
             else:
-                self._commit(msg)
-                return True
+                return self._commit(msg)
         raise AssertionError("unreachable")
 
     def _dead_letter(self, msg: Message, error: BaseException, attempts: int) -> bool:
@@ -117,8 +117,7 @@ class IndexerWorker:
             return False
         metrics.DLQ_EVENTS.inc()
         # Committing past the poison event unblocks the partition.
-        self._commit(msg)
-        return True
+        return self._commit(msg)
 
     def run(self) -> None:
         self.consumer.subscribe([self.topic])
@@ -141,8 +140,20 @@ class IndexerWorker:
         except KafkaException:
             log.debug("could not read consumer lag", exc_info=True)
 
-    def _commit(self, msg: Message) -> None:
-        self.consumer.commit(message=msg, asynchronous=False)
+    def _commit(self, msg: Message) -> bool:
+        """Commit the offset; returns False if the commit was rejected.
+
+        A rebalance can reject the commit (e.g. ILLEGAL_GENERATION) after the
+        index transaction already committed. That's safe to ride out: the new
+        partition owner gets the message again and skips it as already indexed.
+        Crashing here would only turn a routine rebalance into a lost worker.
+        """
+        try:
+            self.consumer.commit(message=msg, asynchronous=False)
+        except KafkaException as exc:
+            log.warning("offset commit for %s rejected: %s", _position(msg), exc)
+            return False
+        return True
 
     def _rewind(self, msg: Message) -> None:
         """Seek back so the same message is redelivered; committing a later offset

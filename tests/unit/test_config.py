@@ -18,8 +18,12 @@ def test_reads_and_parses_env() -> None:
             "EMBEDDING_FAILURE_RATE": "0.3",
             "MAX_RETRIES": "2",
             "RELAY_POLL_INTERVAL_MS": "50",
+            "RECONCILE_GRACE_SECONDS": "5",
+            "KAFKA_SESSION_TIMEOUT_MS": "6000",
         }
     )
+    assert settings.reconcile_grace_seconds == 5.0
+    assert settings.kafka_session_timeout_ms == 6000
     assert settings.database_url == "postgresql://u:p@db:5432/x"
     assert settings.embedding_dimension == 1536
     assert settings.embedding_failure_rate == 0.3
@@ -47,6 +51,8 @@ def test_openai_requires_api_key() -> None:
         ("MAX_RETRIES", "-1"),
         ("MAX_RETRIES", "three"),
         ("RELAY_POLL_INTERVAL_MS", "0"),
+        ("RECONCILE_GRACE_SECONDS", "-1"),
+        ("KAFKA_SESSION_TIMEOUT_MS", "0"),
     ],
 )
 def test_rejects_invalid_values(name: str, value: str) -> None:
