@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api
+.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api relay
 
 install:
 	uv sync
@@ -31,6 +31,9 @@ up:
 
 api:
 	uv run uvicorn --factory freshness.api.app:create_app --port 8000 --reload
+
+relay:
+	uv run python -m freshness.relay
 
 migrate:
 	uv run python -m freshness migrate

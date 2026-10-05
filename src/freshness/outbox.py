@@ -1,11 +1,10 @@
 """Writing change events to the transactional outbox."""
 
 import uuid
-from typing import Literal
 
 import psycopg
 
-EventType = Literal["upserted", "deleted"]
+from freshness.events import EventType
 
 
 def enqueue(

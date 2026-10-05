@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "confluent-kafka>=2.5",
     "fastapi>=0.115",
     "psycopg-pool>=3.2",
     "psycopg[binary]>=3.2",
@@ -17,7 +18,7 @@ dev = [
     "httpx2>=2.13.1",
     "pytest>=8.3",
     "ruff>=0.6",
-    "testcontainers[postgres]>=4.8",
+    "testcontainers[kafka,postgres]>=4.8",
 ]
 
 [build-system]
