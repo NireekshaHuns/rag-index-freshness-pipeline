@@ -23,6 +23,9 @@ partitions=$(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
   | grep -c "Partition: ")
 echo "kafka: document-changes has $partitions partitions"
 
+echo "api: checking health"
+curl -sf http://localhost:8000/health > /dev/null
+
 echo "prometheus: checking readiness"
 curl -sf http://localhost:9090/-/ready > /dev/null
 

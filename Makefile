@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api relay indexer reconciler
+.PHONY: install lint format test test-unit test-integration up infra ps logs down reset smoke migrate api relay indexer reconciler
 
 install:
 	uv sync
@@ -23,11 +23,25 @@ test-unit:
 test-integration:
 	uv run pytest -m integration
 
-# kafka-init runs in the foreground so topics exist before anything uses them.
+APP_SERVICES = api relay indexer reconciler
+
+# kafka-init runs in the foreground so topics exist before any service starts.
 up:
 	$(COMPOSE) up -d --wait postgres kafka prometheus grafana
 	$(COMPOSE) run --rm kafka-init > /dev/null
+	$(COMPOSE) build api
+	$(COMPOSE) up -d --wait $(APP_SERVICES)
 	./scripts/smoke.sh
+
+infra:
+	$(COMPOSE) up -d --wait postgres kafka prometheus grafana
+	$(COMPOSE) run --rm kafka-init > /dev/null
+
+ps:
+	$(COMPOSE) ps
+
+logs:
+	$(COMPOSE) logs -f --tail=100 $(APP_SERVICES)
 
 api:
 	uv run uvicorn --factory freshness.api.app:create_app --port 8000 --reload

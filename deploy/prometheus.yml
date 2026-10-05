@@ -13,16 +13,19 @@ scrape_configs:
       - names: ["relay"]
         type: A
         port: 9100
+        refresh_interval: 5s
   - job_name: indexer
     dns_sd_configs:
       - names: ["indexer"]
         type: A
         port: 9100
+        refresh_interval: 5s
   - job_name: reconciler
     dns_sd_configs:
       - names: ["reconciler"]
         type: A
         port: 9100
+        refresh_interval: 5s
 
   # Services started on the host with `make api`, `make relay`, etc.
   - job_name: local

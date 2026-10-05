@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.claude
+CLAUDE.md
+.playwright-mcp
+**/__pycache__
+.pytest_cache
+.ruff_cache
+tests
+deploy
+docs
+scripts

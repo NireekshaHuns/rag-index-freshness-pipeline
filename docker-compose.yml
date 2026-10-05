@@ -1,6 +1,80 @@
 name: freshness
 
+x-app: &app
+  # Built once by the api service; the others reuse the same local image.
+  image: freshness:latest
+  pull_policy: never
+  restart: unless-stopped
+  stop_grace_period: 15s
+  environment: &app-env
+    DATABASE_URL: postgresql://freshness:freshness@postgres:5432/freshness
+    KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+    KAFKA_TOPIC: document-changes
+    KAFKA_DLQ_TOPIC: document-changes.dlq
+    KAFKA_CONSUMER_GROUP: indexer
+    EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-fake}
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-384}
+    MAX_RETRIES: ${MAX_RETRIES:-5}
+    RETRY_BASE_DELAY_SECONDS: ${RETRY_BASE_DELAY_SECONDS:-0.5}
+    RECONCILE_INTERVAL_SECONDS: ${RECONCILE_INTERVAL_SECONDS:-60}
+    RELAY_POLL_INTERVAL_MS: ${RELAY_POLL_INTERVAL_MS:-200}
+    METRICS_PORT: 9100
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:9100/metrics', timeout=3)
+    interval: 5s
+    timeout: 5s
+    retries: 20
+
 services:
+  api:
+    <<: *app
+    build: .
+    command:
+      - uvicorn
+      - --factory
+      - freshness.api.app:create_app
+      - --host=0.0.0.0
+      - --port=8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  relay:
+    <<: *app
+    command: ["python", "-m", "freshness.relay"]
+
+  indexer:
+    <<: *app
+    command: ["python", "-m", "freshness.indexer"]
+    environment:
+      <<: *app-env
+      # Only the indexer embeds documents, so chaos runs inject failures here.
+      EMBEDDING_FAILURE_RATE: ${EMBEDDING_FAILURE_RATE:-0}
+    deploy:
+      replicas: 2
+
+  reconciler:
+    <<: *app
+    command: ["python", "-m", "freshness.reconciler"]
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
