@@ -25,7 +25,7 @@ test-integration:
 
 # kafka-init runs in the foreground so topics exist before anything uses them.
 up:
-	$(COMPOSE) up -d --wait postgres kafka
+	$(COMPOSE) up -d --wait postgres kafka prometheus grafana
 	$(COMPOSE) run --rm kafka-init > /dev/null
 	./scripts/smoke.sh
 

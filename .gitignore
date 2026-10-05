@@ -24,3 +24,6 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+
+# Local browser automation output
+.playwright-mcp/

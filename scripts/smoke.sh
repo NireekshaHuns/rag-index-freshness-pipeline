@@ -23,4 +23,14 @@ partitions=$(compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
   | grep -c "Partition: ")
 echo "kafka: document-changes has $partitions partitions"
 
+echo "prometheus: checking readiness"
+curl -sf http://localhost:9090/-/ready > /dev/null
+
+echo "grafana: checking provisioned dashboard"
+if ! curl -sf "http://localhost:3000/api/dashboards/uid/rag-freshness" > /dev/null; then
+  echo "freshness dashboard not provisioned" >&2
+  exit 1
+fi
+echo "grafana: dashboard at http://localhost:3000/d/rag-freshness"
+
 echo "smoke check passed"
