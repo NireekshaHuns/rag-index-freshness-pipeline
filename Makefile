@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up infra demo ps logs down reset smoke migrate api relay indexer reconciler
+.PHONY: install lint format test test-unit test-integration up infra demo verify ps logs down reset smoke migrate api relay indexer reconciler
 
 install:
 	uv sync
@@ -39,6 +39,10 @@ infra:
 
 demo:
 	uv run python scripts/demo.py
+
+# Stored vectors can only be recomputed offline with the fake provider.
+verify:
+	uv run python scripts/verify.py $(if $(filter openai,$(EMBEDDING_PROVIDER)),,--embeddings)
 
 ps:
 	$(COMPOSE) ps
