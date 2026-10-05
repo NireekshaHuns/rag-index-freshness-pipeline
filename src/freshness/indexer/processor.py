@@ -9,9 +9,10 @@ from typing import Literal
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from freshness import metrics
 from freshness.chunking import DEFAULT_CONFIG, Chunk, ChunkingConfig, chunk_document
 from freshness.diffing import diff_chunks
-from freshness.embeddings import EmbeddingProvider
+from freshness.embeddings import EmbeddingError, EmbeddingProvider
 from freshness.locks import lock_document
 from freshness.vectors import to_pgvector
 
@@ -28,6 +29,14 @@ class ProcessResult:
     chunks_reused: int = 0
     chunks_deleted: int = 0
     committed_at: datetime | None = None
+    changed_at: datetime | None = None
+    """When the indexed version was committed to the source table."""
+
+    @property
+    def freshness_lag_seconds(self) -> float | None:
+        if self.committed_at is None or self.changed_at is None:
+            return None
+        return (self.committed_at - self.changed_at).total_seconds()
 
 
 class ConcurrentModificationError(Exception):
@@ -81,9 +90,16 @@ class DocumentIndexer:
             # Embedding is slow and may fail, so it happens before any locks
             # are taken; the transaction below re-validates before writing.
             plan = diff_chunks(desired, _stored_positions(conn, document_id))
-            vectors = self.provider.embed([c.text for c in plan.to_embed]) if plan.to_embed else []
+            vectors = self._embed([c.text for c in plan.to_embed]) if plan.to_embed else []
             embedded = {c.content_hash: v for c, v in zip(plan.to_embed, vectors, strict=True)}
             return self._apply_upsert(conn, document_id, snapshot.version, desired, embedded)
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        try:
+            return self.provider.embed(texts)
+        except EmbeddingError:
+            metrics.EMBEDDING_ERRORS.inc()
+            raise
 
     def _apply_delete(
         self, conn: psycopg.Connection, document_id: uuid.UUID, version: int
@@ -95,8 +111,14 @@ class DocumentIndexer:
             removed = conn.execute(
                 "DELETE FROM chunks WHERE document_id = %s", (document_id,)
             ).rowcount
-            committed_at = _record_indexed(conn, document_id, version, deleted=True)
-        return ProcessResult("deleted", version, chunks_deleted=removed, committed_at=committed_at)
+            committed_at, changed_at = _record_indexed(conn, document_id, version, deleted=True)
+        return ProcessResult(
+            "deleted",
+            version,
+            chunks_deleted=removed,
+            committed_at=committed_at,
+            changed_at=changed_at,
+        )
 
     def _apply_upsert(
         self,
@@ -149,7 +171,7 @@ class DocumentIndexer:
                         """,
                         [(c.position, document_id, c.content_hash) for c in diff.repositioned],
                     )
-            committed_at = _record_indexed(conn, document_id, version, deleted=False)
+            committed_at, changed_at = _record_indexed(conn, document_id, version, deleted=False)
         return ProcessResult(
             "indexed",
             version,
@@ -157,6 +179,7 @@ class DocumentIndexer:
             chunks_reused=len(diff.to_reuse),
             chunks_deleted=len(diff.to_delete),
             committed_at=committed_at,
+            changed_at=changed_at,
         )
 
 
@@ -208,7 +231,9 @@ def _lock_and_recheck(
 
 def _record_indexed(
     conn: psycopg.Connection, document_id: uuid.UUID, version: int, deleted: bool
-) -> datetime:
+) -> tuple[datetime, datetime]:
+    """Returns (indexed_at, the source change time). Both come from the database
+    clock, so freshness lag isn't skewed by clock drift between hosts."""
     row = conn.execute(
         """
         INSERT INTO index_state (document_id, indexed_version, indexed_at, deleted)
@@ -217,9 +242,9 @@ def _record_indexed(
         SET indexed_version = EXCLUDED.indexed_version,
             indexed_at = EXCLUDED.indexed_at,
             deleted = EXCLUDED.deleted
-        RETURNING indexed_at
+        RETURNING indexed_at, (SELECT updated_at FROM documents WHERE id = %s)
         """,
-        (document_id, version, deleted),
+        (document_id, version, deleted, document_id),
     ).fetchone()
     assert row is not None
-    return row[0]
+    return row[0], row[1]

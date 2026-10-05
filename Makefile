@@ -33,13 +33,13 @@ api:
 	uv run uvicorn --factory freshness.api.app:create_app --port 8000 --reload
 
 relay:
-	uv run python -m freshness.relay
+	METRICS_PORT=9101 uv run python -m freshness.relay
 
 indexer:
-	uv run python -m freshness.indexer
+	METRICS_PORT=9102 uv run python -m freshness.indexer
 
 reconciler:
-	uv run python -m freshness.reconciler
+	METRICS_PORT=9103 uv run python -m freshness.reconciler
 
 migrate:
 	uv run python -m freshness migrate

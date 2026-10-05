@@ -14,6 +14,7 @@ from freshness.indexer.consumer import IndexerWorker
 from freshness.indexer.dlq import DeadLetterError
 from freshness.indexer.processor import ProcessResult
 from freshness.indexer.retry import RetryPolicy
+from metrics_helpers import sample
 
 
 class StubMessage:
@@ -166,3 +167,47 @@ def test_attempt_count_matches_policy(retries: int) -> None:
     worker.poll_once()
     assert indexer.calls == retries + 1
     assert dlq.published[0][2] == retries + 1
+
+
+def test_retries_and_dead_letters_are_counted() -> None:
+    retries, dead = sample("indexer_retries_total"), sample("indexer_dlq_events_total")
+    worker, _, _, _ = make_worker([TransientEmbeddingError("x")] * 10, max_retries=2)
+
+    worker.poll_once()
+
+    assert sample("indexer_retries_total") == retries + 2
+    assert sample("indexer_dlq_events_total") == dead + 1
+
+
+class LagConsumer:
+    def __init__(self, assigned: dict[int, tuple[int, int]]) -> None:
+        self.assigned = assigned  # partition -> (position, high watermark)
+
+    def assignment(self) -> list[int]:
+        return list(self.assigned)
+
+    def position(self, partitions: list[int]) -> list[Any]:
+        from confluent_kafka import TopicPartition
+
+        return [TopicPartition("t", p, self.assigned[p][0]) for p in partitions]
+
+    def get_watermark_offsets(self, tp: Any, timeout: float, cached: bool) -> tuple[int, int]:
+        return 0, self.assigned[tp.partition][1]
+
+
+def test_consumer_lag_tracks_assignment() -> None:
+    from freshness.indexer.consumer import report_consumer_lag
+
+    consumer = LagConsumer({0: (10, 15), 1: (-1001, 7)})
+    reported = report_consumer_lag(consumer, set())  # type: ignore[arg-type]
+    assert sample("indexer_consumer_lag", partition="0") == 5
+    assert sample("indexer_consumer_lag", partition="1") == 0  # no position yet
+
+    consumer.assigned = {1: (3, 7)}
+    reported = report_consumer_lag(consumer, reported)  # type: ignore[arg-type]
+
+    assert reported == {"1"}
+    assert sample("indexer_consumer_lag", partition="1") == 4
+    from prometheus_client import REGISTRY
+
+    assert REGISTRY.get_sample_value("indexer_consumer_lag", {"partition": "0"}) is None

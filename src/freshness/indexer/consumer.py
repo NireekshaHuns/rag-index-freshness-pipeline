@@ -2,9 +2,11 @@
 
 import logging
 import threading
+import time
 
 from confluent_kafka import Consumer, KafkaException, Message, TopicPartition
 
+from freshness import metrics
 from freshness.config import Settings
 from freshness.events import ChangeEvent
 from freshness.indexer.dlq import DeadLetterError, DeadLetterPublisher
@@ -44,9 +46,13 @@ class IndexerWorker:
         self.dead_letters = dead_letters
         self.retry = retry or RetryPolicy()
         self.stop = stop or threading.Event()
+        self.lag_report_interval_seconds = 5.0
+        self._lag_reported_at = 0.0
+        self._lag_partitions: set[str] = set()
 
     def handle(self, event: ChangeEvent) -> ProcessResult:
         result = self.indexer.process(event.document_id)
+        record_result(result)
         log.info(
             "event %s doc %s v%d -> %s (embedded=%d reused=%d deleted=%d)",
             event.event_id,
@@ -84,6 +90,7 @@ class IndexerWorker:
                     )
                     return self._dead_letter(msg, exc, attempts=attempt)
                 delay = self.retry.delay(attempt - 1)
+                metrics.RETRIES.inc()
                 log.warning(
                     "event %s attempt %d failed (%r); retrying in %.2fs",
                     event.event_id,
@@ -108,6 +115,7 @@ class IndexerWorker:
             self._rewind(msg)
             self.stop.wait(1.0)
             return False
+        metrics.DLQ_EVENTS.inc()
         # Committing past the poison event unblocks the partition.
         self._commit(msg)
         return True
@@ -118,9 +126,20 @@ class IndexerWorker:
         try:
             while not self.stop.is_set():
                 self.poll_once()
+                self._maybe_report_lag()
         finally:
             self.consumer.close()
             log.info("indexer stopped")
+
+    def _maybe_report_lag(self) -> None:
+        now = time.monotonic()
+        if now - self._lag_reported_at < self.lag_report_interval_seconds:
+            return
+        self._lag_reported_at = now
+        try:
+            self._lag_partitions = report_consumer_lag(self.consumer, self._lag_partitions)
+        except KafkaException:
+            log.debug("could not read consumer lag", exc_info=True)
 
     def _commit(self, msg: Message) -> None:
         self.consumer.commit(message=msg, asynchronous=False)
@@ -133,6 +152,34 @@ class IndexerWorker:
             self.consumer.seek(partition)
         except KafkaException:
             log.exception("seek failed for %s", _position(msg))
+
+
+def record_result(result: ProcessResult) -> None:
+    metrics.EVENTS_PROCESSED.labels(result=result.outcome).inc()
+    metrics.CHUNKS_EMBEDDED.inc(result.chunks_embedded)
+    metrics.CHUNKS_REUSED.inc(result.chunks_reused)
+    metrics.CHUNKS_DELETED.inc(result.chunks_deleted)
+    lag = result.freshness_lag_seconds
+    if lag is not None:
+        metrics.FRESHNESS_LAG.observe(max(lag, 0.0))
+
+
+def report_consumer_lag(consumer: Consumer, reported: set[str]) -> set[str]:
+    """Lag per assigned partition: high watermark minus our current position.
+
+    Values are gathered first and the gauge updated in place, so a scrape never
+    sees a half-cleared set. Returns the partitions now reported.
+    """
+    lags: dict[str, int] = {}
+    for tp in consumer.position(consumer.assignment()):
+        _low, high = consumer.get_watermark_offsets(tp, timeout=2, cached=False)
+        position = tp.offset if tp.offset >= 0 else high
+        lags[str(tp.partition)] = max(high - position, 0)
+    for partition, lag in lags.items():
+        metrics.CONSUMER_LAG.labels(partition=partition).set(lag)
+    for partition in reported - lags.keys():
+        metrics.CONSUMER_LAG.remove(partition)  # revoked from this worker
+    return set(lags)
 
 
 def _position(msg: Message) -> str:

@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_client import make_asgi_app
 
 from freshness.api import documents, search
 from freshness.config import Settings
@@ -30,6 +31,7 @@ def create_app(
     app = FastAPI(title="Freshness API", lifespan=lifespan)
     app.include_router(documents.router)
     app.include_router(search.router)
+    app.mount("/metrics", make_asgi_app())
 
     @app.get("/health")
     def health() -> dict[str, str]:

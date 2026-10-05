@@ -11,6 +11,7 @@ from confluent_kafka import KafkaError, Message, Producer
 from psycopg.rows import class_row
 from psycopg_pool import ConnectionPool
 
+from freshness import metrics
 from freshness.events import ChangeEvent
 
 log = logging.getLogger(__name__)
@@ -27,6 +28,8 @@ SELECT_BATCH = """
 """
 
 MARK_PUBLISHED = "UPDATE outbox SET published_at = now() WHERE event_id = ANY(%s)"
+
+COUNT_BACKLOG = "SELECT count(*) FROM outbox WHERE published_at IS NULL"
 
 
 @dataclass
@@ -89,7 +92,15 @@ class OutboxRelay:
             delivered_ids = [event.event_id for event in tracker.delivered]
             if delivered_ids:
                 self.mark_published(conn, delivered_ids)
-            return len(delivered_ids)
+        metrics.OUTBOX_PUBLISHED.inc(len(delivered_ids))
+        return len(delivered_ids)
+
+    def report_backlog(self) -> int:
+        with self.pool.connection() as conn:
+            row = conn.execute(COUNT_BACKLOG).fetchone()
+        backlog = row[0] if row else 0
+        metrics.OUTBOX_BACKLOG.set(backlog)
+        return backlog
 
     def mark_published(self, conn: psycopg.Connection, event_ids: list[uuid.UUID]) -> None:
         conn.execute(MARK_PUBLISHED, (event_ids,))
@@ -102,6 +113,10 @@ class OutboxRelay:
             except Exception:
                 log.exception("relay batch failed; retrying")
                 published = 0
+            try:
+                self.report_backlog()
+            except Exception:
+                log.exception("could not read outbox backlog")
             # Drain a backlog without pausing; only sleep when caught up.
             if published < self.batch_size:
                 stop.wait(poll_interval_seconds)

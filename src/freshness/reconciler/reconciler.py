@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import psycopg
 from psycopg_pool import ConnectionPool
 
-from freshness import outbox
+from freshness import metrics, outbox
 from freshness.locks import lock_document
 
 log = logging.getLogger(__name__)
@@ -87,6 +87,9 @@ class Reconciler:
                 requeued = self._requeue_stale(conn)
             orphan_chunks, deleted = self._remove_orphans(conn)
         report = ReconcileReport(stale_count, requeued, orphan_chunks, deleted)
+        metrics.STALE_DOCUMENTS.set(stale_count)
+        metrics.ORPHAN_CHUNKS.set(orphan_chunks)
+        metrics.REQUEUED.inc(requeued)
         log.info("reconcile: %s", report)
         return report
 

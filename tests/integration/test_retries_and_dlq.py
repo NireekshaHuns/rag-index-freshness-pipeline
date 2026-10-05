@@ -123,7 +123,8 @@ def test_always_failing_embeddings_land_in_dlq(pool: ConnectionPool, settings: S
     dead: list[Message] = []
 
     def all_dead_lettered() -> bool:
-        dead.extend(read_topic(settings, settings.kafka_dlq_topic, 4 - len(dead), timeout=1))
+        # Each read starts from the beginning, so replace rather than append.
+        dead[:] = read_topic(settings, settings.kafka_dlq_topic, 4, timeout=2)
         return len(dead) >= 4
 
     run_worker_until(worker, all_dead_lettered)

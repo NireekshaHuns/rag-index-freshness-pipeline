@@ -4,6 +4,7 @@ import logging
 import signal
 import threading
 
+from freshness import metrics
 from freshness.config import Settings
 from freshness.db import create_pool, migrate
 from freshness.reconciler.reconciler import Reconciler
@@ -13,6 +14,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
     migrate(settings.database_url, settings)
+    metrics.serve(settings.metrics_port)
     pool = create_pool(settings, max_size=2)
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):

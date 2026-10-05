@@ -27,6 +27,7 @@ class Settings:
     retry_base_delay_seconds: float = 0.5
     reconcile_interval_seconds: float = 300.0
     relay_poll_interval_ms: int = 200
+    metrics_port: int = 9100
 
     def __post_init__(self) -> None:
         if self.embedding_provider not in ("fake", "openai"):
@@ -47,6 +48,8 @@ class Settings:
             raise ConfigError("RECONCILE_INTERVAL_SECONDS must be positive")
         if self.relay_poll_interval_ms <= 0:
             raise ConfigError("RELAY_POLL_INTERVAL_MS must be positive")
+        if not 0 < self.metrics_port < 65536:
+            raise ConfigError("METRICS_PORT must be a valid port")
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -83,6 +86,7 @@ class Settings:
                 relay_poll_interval_ms=int(
                     get("RELAY_POLL_INTERVAL_MS", defaults.relay_poll_interval_ms)
                 ),
+                metrics_port=int(get("METRICS_PORT", defaults.metrics_port)),
             )
         except ValueError as exc:
             if isinstance(exc, ConfigError):

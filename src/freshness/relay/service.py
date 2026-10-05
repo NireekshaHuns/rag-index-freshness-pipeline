@@ -4,6 +4,7 @@ import logging
 import signal
 import threading
 
+from freshness import metrics
 from freshness.config import Settings
 from freshness.db import create_pool, migrate
 from freshness.kafka import create_producer
@@ -19,6 +20,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = Settings.from_env()
     migrate(settings.database_url, settings)
+    metrics.serve(settings.metrics_port)
     pool = create_pool(settings, max_size=2)
     producer = create_producer(settings)
     stop = threading.Event()
