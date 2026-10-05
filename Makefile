@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test up down reset smoke
+.PHONY: install lint format test test-unit test-integration up down reset smoke migrate
 
 install:
 	uv sync
@@ -17,11 +17,20 @@ format:
 test:
 	uv run pytest
 
+test-unit:
+	uv run pytest -m "not integration"
+
+test-integration:
+	uv run pytest -m integration
+
 # kafka-init runs in the foreground so topics exist before anything uses them.
 up:
 	$(COMPOSE) up -d --wait postgres kafka
 	$(COMPOSE) run --rm kafka-init > /dev/null
 	./scripts/smoke.sh
+
+migrate:
+	uv run python -m freshness migrate
 
 down:
 	$(COMPOSE) down
