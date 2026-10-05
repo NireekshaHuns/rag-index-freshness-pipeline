@@ -22,10 +22,36 @@ SEARCH = """
     LIMIT %(top_k)s
 """
 
+# Within one document: an exact scan of its chunks. MATERIALIZED keeps the
+# planner from routing a highly selective filter through the approximate index.
+SEARCH_DOCUMENT = """
+    WITH candidates AS MATERIALIZED (
+        SELECT document_id, position, content, embedding
+        FROM chunks WHERE document_id = %(document_id)s
+    )
+    SELECT c.document_id, d.title, s.indexed_version, c.position, c.content,
+           1 - (c.embedding <=> %(query)s::vector) AS score
+    FROM candidates c
+    JOIN documents d ON d.id = c.document_id AND NOT d.deleted
+    JOIN index_state s ON s.document_id = c.document_id AND NOT s.deleted
+    ORDER BY c.embedding <=> %(query)s::vector
+    LIMIT %(top_k)s
+"""
+
+# A wider candidate list improves recall; iterative scanning keeps fetching
+# candidates when filters (deleted documents) discard some, so top_k is filled.
+HNSW_SETTINGS = (
+    "SET LOCAL hnsw.ef_search = 100",
+    "SET LOCAL hnsw.iterative_scan = strict_order",
+)
+
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
     top_k: int = Field(default=5, ge=1, le=50)
+    document_id: uuid.UUID | None = Field(
+        default=None, description="Only search within this document."
+    )
 
 
 class SearchHit(BaseModel):
@@ -50,8 +76,14 @@ def search(body: SearchRequest, request: Request) -> SearchResponse:
     except TransientEmbeddingError as exc:
         raise HTTPException(status_code=503, detail="embedding service unavailable") from exc
 
-    with request.app.state.pool.connection() as conn:
-        rows = conn.execute(SEARCH, {"query": to_pgvector(vector), "top_k": body.top_k}).fetchall()
+    params = {"query": to_pgvector(vector), "top_k": body.top_k, "document_id": body.document_id}
+    with request.app.state.pool.connection() as conn, conn.transaction():
+        if body.document_id is None:
+            for setting in HNSW_SETTINGS:
+                conn.execute(setting)
+            rows = conn.execute(SEARCH, params).fetchall()
+        else:
+            rows = conn.execute(SEARCH_DOCUMENT, params).fetchall()
     results = [
         SearchHit(
             document_id=row[0],

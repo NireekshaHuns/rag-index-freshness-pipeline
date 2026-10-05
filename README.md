@@ -50,7 +50,7 @@ always be committed together.
 
 | Component | Role |
 |---|---|
-| **Document API** (FastAPI) | Writes the document and an outbox row in one transaction. Serves `POST /search`. |
+| **Document API** (FastAPI) | Writes the document and an outbox row in one transaction. Serves `POST /search` (optionally scoped to one `document_id`). |
 | **Outbox relay** | Publishes unpublished outbox rows to Kafka, keyed by `document_id`. It marks a row published only after Kafka acknowledges it. |
 | **Kafka** (KRaft, 6 partitions) | Ordered, replayable log. All events for one document land on one partition. |
 | **Indexer** (consumer group, 2 replicas) | Reads the *current* document, chunks it, diffs by content hash, embeds only new chunks, and applies the result in one transaction. It commits the Kafka offset after that. |
@@ -74,7 +74,7 @@ make demo      # create -> search -> edit one paragraph -> time until search ref
 `make demo` prints something like:
 
 ```
-==> Searching: 'what is the hotel nightly limit'
+==> Searching the document: 'what is the hotel nightly limit'
   indexed and searchable after 0.70s
   BEFORE (v1, score 0.170):
     "Hotel stays are reimbursed up to a nightly limit of 200 dollars in most cities. ..."
@@ -289,10 +289,16 @@ tests/            unit/, integration/, chaos/
 - **Search can mix a new title with old content** in the short window before the
   indexer catches up: the title comes from `documents`, the content from the
   index.
-- **Fewer than `top_k` results are possible** when many matches belong to
-  deleted documents, because the HNSW index returns candidates before the filter
-  is applied. Raising `hnsw.ef_search` or removing chunks of deleted documents
-  sooner would help at scale.
+- **The fake embedding provider is a weak retriever on large corpora.** It
+  hashes words into 384 dimensions, so with thousands of distinct tokens,
+  unrelated text collides with a short query. It exists to make the pipeline
+  runnable offline and verifiable, not to rank well. Use
+  `EMBEDDING_PROVIDER=openai` for meaningful relevance. The demo scopes its
+  search to its own document, so other data can't affect its timing.
+- **Approximate search trades recall for speed.** Unscoped search uses the HNSW
+  index with `ef_search = 100` and pgvector's iterative scan, so filtered-out
+  (deleted) documents don't reduce the result count. Scoped search is an exact
+  scan of one document's chunks.
 - **The reconciler doesn't re-chunk documents,** so it won't notice a stale chunk
   inside an up-to-date document; only a bug could cause one. `make verify` does
   that full check.

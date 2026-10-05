@@ -58,8 +58,13 @@ def index(pool: ConnectionPool) -> DocumentIndexer:
     return DocumentIndexer(pool, FakeEmbeddingProvider(DIMENSION))
 
 
-def search(client: TestClient, query: str, top_k: int = 3) -> list[dict[str, object]]:
-    response = client.post("/search", json={"query": query, "top_k": top_k})
+def search(
+    client: TestClient, query: str, top_k: int = 3, document_id: str | None = None
+) -> list[dict[str, object]]:
+    body: dict[str, object] = {"query": query, "top_k": top_k}
+    if document_id:
+        body["document_id"] = document_id
+    response = client.post("/search", json=body)
     assert response.status_code == 200, response.text
     return response.json()["results"]
 
@@ -137,3 +142,33 @@ def test_invalid_requests_are_rejected(client: TestClient) -> None:
 def test_embedding_outage_returns_503(client: TestClient, provider: SwitchableProvider) -> None:
     provider.failing = True
     assert client.post("/search", json={"query": "vacation"}).status_code == 503
+
+
+def test_search_can_be_scoped_to_one_document(client: TestClient, index: DocumentIndexer) -> None:
+    handbook = client.post("/documents", json={"title": "Handbook", "content": HANDBOOK}).json()
+    other_content = HANDBOOK.replace("Leave policy", "Leave policy for contractors")
+    other = client.post("/documents", json={"title": "Other", "content": other_content}).json()
+    for doc in (handbook, other):
+        index.process(uuid.UUID(doc["id"]))
+
+    results = search(client, "vacation days", top_k=10, document_id=other["id"])
+
+    assert results and {r["document_id"] for r in results} == {other["id"]}
+    assert search(client, "vacation", document_id=str(uuid.uuid4())) == []
+
+
+def test_deleted_documents_do_not_starve_top_k(client: TestClient, index: DocumentIndexer) -> None:
+    """Many deleted near-duplicates must not crowd out the live result."""
+    for i in range(60):
+        doc = client.post(
+            "/documents", json={"title": f"Old {i}", "content": f"Paid vacation days {i}."}
+        ).json()
+        index.process(uuid.UUID(doc["id"]))
+        client.delete(f"/documents/{doc['id']}")  # chunks stay until reindexed
+    live = client.post("/documents", json={"title": "Live", "content": HANDBOOK}).json()
+    index.process(uuid.UUID(live["id"]))
+
+    results = search(client, "paid vacation days", top_k=3)
+
+    assert len(results) == 3
+    assert {r["document_id"] for r in results} == {live["id"]}

@@ -48,8 +48,9 @@ class Api:
         with urllib.request.urlopen(request, timeout=10) as response:
             return json.load(response)
 
-    def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        return self.call("POST", "/search", {"query": query, "top_k": top_k})["results"]
+    def search(self, query: str, document_id: str, top_k: int = 5) -> list[dict[str, Any]]:
+        body = {"query": query, "top_k": top_k, "document_id": document_id}
+        return self.call("POST", "/search", body)["results"]
 
 
 def wait_until[T](check: Callable[[], T | None], timeout: float, interval: float = 0.05) -> T:
@@ -105,8 +106,9 @@ def run(api: Api, prometheus_url: str, timeout: float, cleanup: bool) -> None:
     doc_id = doc["id"]
     print(f"  id {doc_id}, version {doc['version']}")
 
-    step(f"Searching: {QUERY!r}")
-    before = wait_until(lambda: find_hit(api.search(QUERY), doc_id, OLD_TEXT), timeout)
+    # Scoped to this document so other data in the index can't affect the timing.
+    step(f"Searching the document: {QUERY!r}")
+    before = wait_until(lambda: find_hit(api.search(QUERY, doc_id), doc_id, OLD_TEXT), timeout)
     print(f"  indexed and searchable after {time.monotonic() - started:.2f}s")
     show_hit("BEFORE", before)
 
@@ -126,7 +128,7 @@ def run(api: Api, prometheus_url: str, timeout: float, cleanup: bool) -> None:
 
     step("Polling search until the new content appears")
     try:
-        after = wait_until(lambda: find_hit(api.search(QUERY), doc_id, NEW_TEXT), timeout)
+        after = wait_until(lambda: find_hit(api.search(QUERY, doc_id), doc_id, NEW_TEXT), timeout)
     except TimeoutError:
         sys.exit(f"  edit not visible after {timeout:.0f}s; check `make logs`")
     edit_seconds = time.monotonic() - edit_started
