@@ -43,6 +43,21 @@ class TestFakeProvider:
         )
         assert cosine(query, related) > cosine(query, unrelated)
 
+    def test_stop_words_do_not_outrank_meaningful_words(self) -> None:
+        query, relevant, filler = self.provider.embed(
+            [
+                "what is the hotel nightly limit",
+                "Hotel stays are reimbursed up to a nightly limit of 200 dollars in most "
+                "cities, and managers may approve more for high-cost cities.",
+                "The rule is that the limit is the limit and the rule is the rule.",
+            ]
+        )
+        assert cosine(query, relevant) > cosine(query, filler)
+
+    def test_only_stop_words_still_gets_a_unit_vector(self) -> None:
+        [vector] = self.provider.embed(["what is the"])
+        assert math.isclose(sum(v * v for v in vector), 1.0)
+
     def test_text_without_words_still_gets_a_unit_vector(self) -> None:
         a, b = self.provider.embed(["!!!", "???"])
         assert math.isclose(sum(v * v for v in a), 1.0)

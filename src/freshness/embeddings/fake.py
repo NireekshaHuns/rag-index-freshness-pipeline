@@ -4,18 +4,69 @@ import hashlib
 import math
 import random
 import re
+from collections import Counter
 from collections.abc import Sequence
 
 from freshness.hashing import normalize
 
 _TOKEN = re.compile(r"\w+")
 
+# Without these, filler words dominate short queries and rank unrelated text first.
+STOP_WORDS = frozenset(
+    [
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "can",
+        "do",
+        "does",
+        "for",
+        "from",
+        "has",
+        "have",
+        "how",
+        "if",
+        "in",
+        "is",
+        "it",
+        "its",
+        "of",
+        "on",
+        "or",
+        "our",
+        "that",
+        "the",
+        "their",
+        "there",
+        "this",
+        "to",
+        "was",
+        "we",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "you",
+        "your",
+    ]
+)
+
 
 class FakeEmbeddingProvider:
     """Feature-hashed bag of words: each token is hashed to a signed dimension.
 
-    Deterministic like a pure text hash, but texts that share words land near
-    each other, so search over fake embeddings still returns sensible results.
+    Deterministic like a pure text hash, but texts that share meaningful words
+    land near each other, so search over fake embeddings still returns sensible
+    results. Stop words are ignored and repeats are damped (1 + log count).
     """
 
     def __init__(self, dimension: int) -> None:
@@ -32,10 +83,12 @@ class FakeEmbeddingProvider:
 
     def _embed_one(self, text: str) -> list[float]:
         vector = [0.0] * self._dimension
-        for token in _TOKEN.findall(normalize(text).lower()):
+        tokens = Counter(t for t in _TOKEN.findall(normalize(text).lower()) if t not in STOP_WORDS)
+        for token, count in tokens.items():
             digest = hashlib.sha256(token.encode()).digest()
             index = int.from_bytes(digest[:8], "big") % self._dimension
-            vector[index] += 1.0 if digest[8] & 1 else -1.0
+            weight = 1.0 + math.log(count)
+            vector[index] += weight if digest[8] & 1 else -weight
         if not any(vector):
             # No word tokens (or they cancelled out): fall back to a vector
             # seeded by the whole text so it's still non-zero and unique.
