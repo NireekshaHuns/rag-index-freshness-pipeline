@@ -5,6 +5,9 @@ import psycopg
 import pytest
 from testcontainers.community.postgres import PostgresContainer
 
+from freshness.config import Settings
+from freshness.db import migrate
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
@@ -26,3 +29,10 @@ def empty_database_url(postgres_container: PostgresContainer) -> str:
     with psycopg.connect(admin_url, autocommit=True) as conn:
         conn.execute(f'CREATE DATABASE "{name}"')
     return admin_url.rsplit("/", 1)[0] + f"/{name}"
+
+
+@pytest.fixture
+def database_url(empty_database_url: str) -> str:
+    """A fresh database with all migrations applied."""
+    migrate(empty_database_url, Settings(database_url=empty_database_url))
+    return empty_database_url

@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up down reset smoke migrate
+.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api
 
 install:
 	uv sync
@@ -28,6 +28,9 @@ up:
 	$(COMPOSE) up -d --wait postgres kafka
 	$(COMPOSE) run --rm kafka-init > /dev/null
 	./scripts/smoke.sh
+
+api:
+	uv run uvicorn --factory freshness.api.app:create_app --port 8000 --reload
 
 migrate:
 	uv run python -m freshness migrate
