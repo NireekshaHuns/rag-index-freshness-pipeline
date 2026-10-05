@@ -1,7 +1,7 @@
 COMPOSE ?= docker compose
 export COMPOSE
 
-.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api relay indexer
+.PHONY: install lint format test test-unit test-integration up down reset smoke migrate api relay indexer reconciler
 
 install:
 	uv sync
@@ -37,6 +37,9 @@ relay:
 
 indexer:
 	uv run python -m freshness.indexer
+
+reconciler:
+	uv run python -m freshness.reconciler
 
 migrate:
 	uv run python -m freshness migrate

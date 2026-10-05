@@ -12,6 +12,7 @@ from psycopg_pool import ConnectionPool
 from freshness.chunking import DEFAULT_CONFIG, Chunk, ChunkingConfig, chunk_document
 from freshness.diffing import diff_chunks
 from freshness.embeddings import EmbeddingProvider
+from freshness.locks import lock_document
 from freshness.vectors import to_pgvector
 
 log = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ def _lock_and_recheck(
 ) -> Literal["ok", "stale"]:
     """Serialize index writers per document, then confirm our version is still the
     one to write. Raises _Retry if the document moved on while we embedded."""
-    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s::text, 0))", (document_id,))
+    lock_document(conn, document_id)
     row = conn.execute(
         """
         SELECT d.version, s.indexed_version
