@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RAG Index Freshness</title>
+  <meta name="description" content="Edit a document and watch a live event-driven pipeline bring the vector search index up to date in milliseconds.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='3' cy='8' r='2' fill='%232F5BEA'/><circle cx='13' cy='8' r='2' fill='%230E8A6A'/><path d='M5 8h6' stroke='%231C2633' stroke-width='1.5'/></svg>">
+</head>
+<body>
+  <a class="skip" href="#editor">Skip to the editor</a>
+
+  <header class="masthead">
+    <h1>Edit a document.<br>Watch search catch up.</h1>
+    <p class="lede">
+      This page is connected to a live pipeline: Postgres, an outbox relay, Kafka and two
+      indexer workers writing to a pgvector index. Change a paragraph and the timeline below
+      shows how long the edit took to reach search, measured on the database clock, and how
+      many chunks actually had to be embedded again.
+    </p>
+    <nav class="links" aria-label="Project links">
+      <a href="https://github.com/NireekshaHuns/rag-index-freshness-pipeline">Source on GitHub</a>
+      <a href="docs">API reference</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="track" aria-labelledby="track-title">
+      <div class="track-head">
+        <h2 id="track-title">Latest change</h2>
+        <p id="track-summary" class="track-summary" aria-live="polite">Create the document to start the clock.</p>
+      </div>
+      <div id="timeline" class="timeline" data-state="idle">
+        <div class="axis" id="axis"></div>
+        <div class="lane">
+          <div class="run" id="run"></div>
+          <div class="mark" data-mark="saved"><span class="dot"></span><span class="mark-label">Saved</span></div>
+          <div class="mark" data-mark="published"><span class="dot"></span><span class="mark-label">Sent to Kafka</span></div>
+          <div class="mark" data-mark="indexed"><span class="dot"></span><span class="mark-label">Indexed</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="workbench">
+      <section class="pane" id="editor" aria-labelledby="editor-title">
+        <div class="pane-head">
+          <h2 id="editor-title">The document</h2>
+          <span id="doc-version" class="version"></span>
+        </div>
+        <label class="field">
+          <span>Title</span>
+          <input id="title" type="text" maxlength="200" autocomplete="off">
+        </label>
+        <label class="field grow">
+          <span>Content <small>Paragraphs are separated by a blank line.</small></span>
+          <textarea id="content" rows="16" spellcheck="false"></textarea>
+        </label>
+        <div class="actions">
+          <button id="save" class="primary" type="button">Create document</button>
+          <button id="delete" class="quiet" type="button" hidden>Delete document</button>
+        </div>
+        <div id="presets" class="presets" hidden>
+          <p>Or try one of these edits:</p>
+          <ul>
+            <li><button type="button" data-preset="price">Raise the hotel limit to 250 dollars</button></li>
+            <li><button type="button" data-preset="add">Add a paragraph about mileage</button></li>
+            <li><button type="button" data-preset="move">Move the last paragraph to the top</button></li>
+          </ul>
+        </div>
+        <p id="editor-error" class="error" role="alert" hidden></p>
+      </section>
+
+      <section class="pane" aria-labelledby="index-title">
+        <div class="pane-head">
+          <h2 id="index-title">What the search index holds</h2>
+          <span id="index-version" class="version"></span>
+        </div>
+        <p class="legend">
+          <span class="key key-new"></span>Embedded in the latest change
+          <span class="key key-reused"></span>Kept from an earlier version
+        </p>
+        <ol id="chunks" class="chunks">
+          <li class="empty">Nothing is indexed yet. Create the document and its chunks appear here.</li>
+        </ol>
+
+        <form id="search" class="search" role="search">
+          <label for="query">Search this document</label>
+          <div class="search-row">
+            <input id="query" type="search" value="what is the hotel nightly limit" autocomplete="off">
+            <button type="submit">Search</button>
+          </div>
+        </form>
+        <ol id="results" class="results" aria-live="polite"></ol>
+      </section>
+    </div>
+
+    <section class="history" aria-labelledby="history-title" id="history-section" hidden>
+      <h2 id="history-title">Every change so far</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Version</th>
+              <th scope="col">Change</th>
+              <th scope="col" class="num">Sent to Kafka</th>
+              <th scope="col" class="num">Indexed</th>
+              <th scope="col" class="num">Embedded</th>
+              <th scope="col" class="num">Kept</th>
+            </tr>
+          </thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="scale" aria-labelledby="scale-title">
+      <h2 id="scale-title">At scale, and under failure</h2>
+      <div class="scale-grid">
+        <div>
+          <p>
+            One document is easy. The benchmark seeds 1,000 documents, then rewrites 10% of all
+            paragraphs at 50 edits per second with two indexer workers.
+          </p>
+          <table class="figures">
+            <tbody>
+              <tr><th scope="row">Edit visible in search, median</th><td>158 ms</td></tr>
+              <tr><th scope="row">Edit visible in search, 95th percentile</th><td>376 ms</td></tr>
+              <tr><th scope="row">Chunks re-embedded</th><td>806 of 4,817</td></tr>
+              <tr><th scope="row">Embedding calls avoided</th><td>83%</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div>
+          <p>
+            The fault-injection suite runs the real services and breaks them on purpose. After
+            every scenario a verifier recomputes the whole index from the source documents and
+            must find nothing lost, nothing applied twice and no orphaned chunks.
+          </p>
+          <ul class="faults">
+            <li>Indexer workers killed in the middle of writes</li>
+            <li>Every event delivered twice</li>
+            <li>Events shuffled across partitions, then replayed backwards</li>
+            <li>30% of embedding calls failing</li>
+            <li>The outbox relay killed three times mid-run</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Built by Nireeksha Huns. Embeddings on this page come from a local deterministic model, so similarity scores are rough; the timings are real.</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

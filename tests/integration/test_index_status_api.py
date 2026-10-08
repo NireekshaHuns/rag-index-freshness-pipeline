@@ -121,3 +121,12 @@ def test_follows_a_delete_through_the_index(client: TestClient, index: DocumentI
 
 def test_unknown_document_is_not_found(client: TestClient) -> None:
     assert client.get(f"/documents/{uuid.uuid4()}/index").status_code == 404
+
+
+def test_demo_page_is_served_without_hiding_the_api(client: TestClient) -> None:
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "Watch search catch up" in page.text
+    assert client.get("/app.js").status_code == 200
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/docs").status_code == 200

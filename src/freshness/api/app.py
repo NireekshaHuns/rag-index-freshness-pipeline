@@ -2,14 +2,18 @@
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import make_asgi_app
 
 from freshness.api import documents, search
 from freshness.config import Settings
 from freshness.db import create_pool, migrate
 from freshness.embeddings import EmbeddingProvider, create_provider
+
+STATIC_DIR = Path(__file__).parent / "static"
 
 
 def create_app(
@@ -37,4 +41,6 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    # Mounted last: the demo page is the fallback for every path no route matched.
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
     return app
