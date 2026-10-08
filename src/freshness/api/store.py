@@ -82,3 +82,58 @@ def get_document(conn: psycopg.Connection, document_id: uuid.UUID) -> Document |
         return cur.execute(
             f"SELECT {COLUMNS} FROM documents WHERE id = %s AND NOT deleted", (document_id,)
         ).fetchone()
+
+
+@dataclass(frozen=True)
+class IndexedChunk:
+    position: int
+    content: str
+    embedded_at_version: int
+
+
+@dataclass(frozen=True)
+class IndexStatus:
+    """How far one document has travelled through the pipeline, on the database clock."""
+
+    document: Document
+    published_at: datetime | None
+    """When the current version's event was first published to Kafka."""
+    indexed_version: int | None
+    indexed_at: datetime | None
+    chunks: list[IndexedChunk]
+
+
+def get_index_status(conn: psycopg.Connection, document_id: uuid.UUID) -> IndexStatus | None:
+    """Unlike get_document, includes deleted documents so a delete can be followed too."""
+    with conn.cursor(row_factory=class_row(Document)) as cur:
+        doc = cur.execute(
+            f"SELECT {COLUMNS} FROM documents WHERE id = %s", (document_id,)
+        ).fetchone()
+    if doc is None:
+        return None
+    published = conn.execute(
+        """
+        SELECT min(published_at) FROM outbox
+        WHERE document_id = %s AND document_version = %s
+        """,
+        (document_id, doc.version),
+    ).fetchone()
+    state = conn.execute(
+        "SELECT indexed_version, indexed_at FROM index_state WHERE document_id = %s",
+        (document_id,),
+    ).fetchone()
+    with conn.cursor(row_factory=class_row(IndexedChunk)) as cur:
+        chunks = cur.execute(
+            """
+            SELECT position, content, document_version AS embedded_at_version
+            FROM chunks WHERE document_id = %s ORDER BY position
+            """,
+            (document_id,),
+        ).fetchall()
+    return IndexStatus(
+        document=doc,
+        published_at=published[0] if published else None,
+        indexed_version=state[0] if state else None,
+        indexed_at=state[1] if state else None,
+        chunks=chunks,
+    )
