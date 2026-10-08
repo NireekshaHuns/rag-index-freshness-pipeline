@@ -50,7 +50,7 @@ always be committed together.
 
 | Component | Role |
 |---|---|
-| **Document API** (FastAPI) | Writes the document and an outbox row in one transaction. Serves `POST /search` (optionally scoped to one `document_id`). |
+| **Document API** (FastAPI) | Writes the document and an outbox row in one transaction. Serves `POST /search` (optionally scoped to one `document_id`), `GET /documents/{id}/index` (where a document is in the pipeline) and the demo page. |
 | **Outbox relay** | Publishes unpublished outbox rows to Kafka, keyed by `document_id`. It marks a row published only after Kafka acknowledges it. |
 | **Kafka** (KRaft, 6 partitions) | Ordered, replayable log. All events for one document land on one partition. |
 | **Indexer** (consumer group, 2 replicas) | Reads the *current* document, chunks it, diffs by content hash, embeds only new chunks, and applies the result in one transaction. It commits the Kafka offset after that. |
@@ -93,6 +93,7 @@ Then open:
 
 | URL | What |
 |---|---|
+| http://localhost:8000 | Demo page: edit a document and watch each change reach search, with a timeline of when it was saved, sent to Kafka and indexed, and which chunks were re-embedded |
 | http://localhost:3000/d/rag-freshness | Grafana dashboard (anonymous read-only; admin login `admin` / `admin`) |
 | http://localhost:8000/docs | API docs (OpenAPI) |
 | http://localhost:9090 | Prometheus |
@@ -262,7 +263,8 @@ All settings are environment variables (see `.env.example`).
 
 ```
 src/freshness/
-  api/            Document API, search, app factory
+  api/            Document API, search, index status, app factory
+  api/static/     Demo page (plain HTML, CSS and JavaScript)
   relay/          Outbox relay
   indexer/        Processor, consumer loop, retry policy, DLQ publisher
   reconciler/     Drift detection and repair
